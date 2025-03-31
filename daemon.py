@@ -217,7 +217,8 @@ if __name__ == "__main__":
         
             try:
                 for line in buildProcess.stdout:
-                    emit_log(job["containerId"], job["jobId"], line, logIndex++, build=True)
+                    emit_log(job["containerId"], job["jobId"], line, logIndex, build=True)
+                    logIndex++
             finally:
                 buildProcess.stdout.close()
                 buildCode = buildProcess.wait()
@@ -241,7 +242,8 @@ if __name__ == "__main__":
 
                 try:
                     for line in jobProcess.stdout:
-                        emit_log(job["containerId"], job["jobId"], line, logIndex++)
+                        emit_log(job["containerId"], job["jobId"], line, logIndex)
+                        logIndex++
                 finally:
                     jobProcess.stdout.close()
                     exitCode = jobProcess.wait()
