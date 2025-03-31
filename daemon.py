@@ -170,6 +170,8 @@ def emit_log(containerId, jobId, content, index, build=False):
 
 # Register instance and listen for jobs
 if __name__ == "__main__":
+    jobs = db["jobs"]
+
     nodeId = register_node()
     lastActivity = int(time.time()) 
     while True:
@@ -193,11 +195,12 @@ if __name__ == "__main__":
                 continue
 
             # Job request received, begin processing
-            jobRequest = jobRequest[0]
+            job = json.loads(jobRequest[0]["Body"])
             lastActivity = int(time.time())
 
-            # Load job info payload
-            job = json.loads(jobRequest['Body'])
+            # Check job not yet processed
+            if jobs.count_documents({ "_id": ObjectId(job["jobId"]), "status": { "$nin": ["PENDING"] }):
+                continue
 
             # Notify Pusher build is starting
             update_status(job["containerId"], job["jobId"], "STARTED")
