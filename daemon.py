@@ -202,6 +202,10 @@ if __name__ == "__main__":
 
             # Check job not yet processed
             if jobs.count_documents({ "_id": ObjectId(job["jobId"]), "status": { "$nin": ["PENDING"] }}) > 0:
+                sqs.delete_message(
+                    QueueUrl=SQS_URL,
+                    ReceiptHandle=receiptHandle
+                )
                 continue
         
             # Notify Pusher build is starting
