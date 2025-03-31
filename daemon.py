@@ -79,7 +79,7 @@ def register_node():
     }}, return_document=True)
 
     if node:
-        node_jobs = list(jobs.find({ "node": node["_id"], "status": { "$nin": ["COMPLETED", "FAILED"] }}))
+        node_jobs = list(jobs.find({ "node": node["_id"], "status": { "$nin": ["COMPLETED", "FAILED", "BUILD_FAILED"] }}))
         if len(node_jobs) > 0:
             for job in node_jobs:
                 update_status(job["containerId"], job["_id"], "NODE_STARTED")
@@ -175,7 +175,7 @@ if __name__ == "__main__":
     while True:
 
         now = int(time.time())
-        if now - lastActivity >= 600:
+        if now - lastActivity >= 1800:
             shutdown_node(nodeId)
             break
 
