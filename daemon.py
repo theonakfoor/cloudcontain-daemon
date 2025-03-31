@@ -199,7 +199,7 @@ if __name__ == "__main__":
             lastActivity = int(time.time())
 
             # Check job not yet processed
-            if jobs.count_documents({ "_id": ObjectId(job["jobId"]), "status": { "$nin": ["PENDING"] }):
+            if jobs.count_documents({ "_id": ObjectId(job["jobId"]), "status": { "$nin": ["PENDING"] }) > 0:
                 continue
 
             # Notify Pusher build is starting
