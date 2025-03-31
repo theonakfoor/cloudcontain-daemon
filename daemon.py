@@ -218,7 +218,7 @@ if __name__ == "__main__":
             try:
                 for line in buildProcess.stdout:
                     emit_log(job["containerId"], job["jobId"], line, logIndex, build=True)
-                    logIndex++
+                    logIndex+=1
             finally:
                 buildProcess.stdout.close()
                 buildCode = buildProcess.wait()
@@ -243,7 +243,7 @@ if __name__ == "__main__":
                 try:
                     for line in jobProcess.stdout:
                         emit_log(job["containerId"], job["jobId"], line, logIndex)
-                        logIndex++
+                        logIndex+=1
                 finally:
                     jobProcess.stdout.close()
                     exitCode = jobProcess.wait()
