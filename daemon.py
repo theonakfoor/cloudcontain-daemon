@@ -185,7 +185,8 @@ if __name__ == "__main__":
             response = sqs.receive_message(
                     QueueUrl=SQS_URL,
                     MaxNumberOfMessages=1,
-                    WaitTimeSeconds=20
+                    WaitTimeSeconds=20,
+                    VisibilityTimeout=90
             )
 
             jobRequest = response.get('Messages', [])
@@ -195,13 +196,14 @@ if __name__ == "__main__":
                 continue
 
             # Job request received, begin processing
+            receiptHandle = jobRequest[0]["ReceiptHandle"]
             job = json.loads(jobRequest[0]["Body"])
             lastActivity = int(time.time())
 
             # Check job not yet processed
             if jobs.count_documents({ "_id": ObjectId(job["jobId"]), "status": { "$nin": ["PENDING"] }}) > 0:
                 continue
-
+        
             # Notify Pusher build is starting
             update_status(job["containerId"], job["jobId"], "STARTED")
             time.sleep(0.5)
@@ -234,7 +236,7 @@ if __name__ == "__main__":
                     
                     sqs.delete_message(
                         QueueUrl=SQS_URL,
-                        ReceiptHandle=jobRequest['ReceiptHandle']
+                        ReceiptHandle=receiptHandle
                     )
 
                     continue
@@ -264,7 +266,7 @@ if __name__ == "__main__":
                 # Remove queue item once execution is completed
                 sqs.delete_message(
                     QueueUrl=SQS_URL,
-                    ReceiptHandle=jobRequest['ReceiptHandle']
+                    ReceiptHandle=receiptHandle
                 )
 
         except Exception as e:
