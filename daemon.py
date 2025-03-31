@@ -144,6 +144,30 @@ def generate_dockerfile(containerId):
         output.write(content)
 
 
+# Emit log via Pusher and store in MongoDB
+def emit_log(containerId, jobId, content, index, build=False):
+    logs = db["logs"]
+
+    timestamp = datetime.now(timezone.utc)
+
+    pusher_client.trigger(containerId, 'job-output', {
+        "jobId": jobId,
+        "content": content,
+        "timestamp": str(timestamp),
+        "build": build,
+        "index": index
+    })
+
+    logs.insert_one({
+        "containerId": ObjectId(containerId),
+        "jobId": ObjectId(jobId),
+        "content": content,
+        "timestamp": timestamp,
+        "build": build,
+        "index": index
+    })
+
+
 # Register instance and listen for jobs
 if __name__ == "__main__":
     nodeId = register_node()
@@ -188,15 +212,12 @@ if __name__ == "__main__":
             update_status(job["containerId"], job["jobId"], "CONTAINERIZING")
             generate_dockerfile(job["containerId"])
             buildProcess = subprocess.Popen(["docker", "build", "-t", f"job-{job['jobId']}", f"/tmp/cloudcontain-jobs/{job['containerId']}"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, bufsize=1) 
-            
+    
+            logIndex = 0
+        
             try:
                 for line in buildProcess.stdout:
-                    pusher_client.trigger(job["containerId"], 'job-output', {
-                        "jobId": job["jobId"],
-                        "content": line,
-                        "timestamp": str(datetime.now(timezone.utc)),
-                        "build": True
-                    })
+                    emit_log(job["containerId"], job["jobId"], line, logIndex++, build=True)
             finally:
                 buildProcess.stdout.close()
                 buildCode = buildProcess.wait()
@@ -220,12 +241,7 @@ if __name__ == "__main__":
 
                 try:
                     for line in jobProcess.stdout:
-                        pusher_client.trigger(job["containerId"], 'job-output', {
-                            "jobId": job["jobId"],
-                            "content": line,
-                            "timestamp": str(datetime.now(timezone.utc)),
-                            "build": False
-                        })
+                        emit_log(job["containerId"], job["jobId"], line, logIndex++)
                 finally:
                     jobProcess.stdout.close()
                     exitCode = jobProcess.wait()
@@ -234,7 +250,7 @@ if __name__ == "__main__":
                     # Clean up tmp files and remove docker image
                     update_status(job["containerId"], job["jobId"], "CLEANING")
                     subprocess.run(["rm", "-rf", f"/tmp/cloudcontain-jobs/{job['containerId']}"])
-                    subprocess.run(["sudo", "docker", "rmi", f"job-{job['jobId']}"])
+                    subprocess.run(["docker", "rmi", f"job-{job['jobId']}"])
                     time.sleep(0.5)
 
                     # Notify Pusher of success/failure
