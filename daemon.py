@@ -171,6 +171,7 @@ def emit_log(containerId, jobId, content, index, build=False):
 # Register instance and listen for jobs
 if __name__ == "__main__":
     nodeId = register_node()
+    time.sleep(5)
     lastActivity = int(time.time()) 
     while True:
 
@@ -258,11 +259,11 @@ if __name__ == "__main__":
                     # Notify Pusher of success/failure
                     update_status(job["containerId"], job["jobId"], "COMPLETED" if exitCode == 0 else "FAILED")
 
-                    # Remove queue item once execution is completed
-                    sqs.delete_message(
-                        QueueUrl=SQS_URL,
-                        ReceiptHandle=jobRequest['ReceiptHandle']
-                    )
+                # Remove queue item once execution is completed
+                sqs.delete_message(
+                    QueueUrl=SQS_URL,
+                    ReceiptHandle=jobRequest['ReceiptHandle']
+                )
 
         except Exception as e:
             print(f"Error: {e}")
