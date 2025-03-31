@@ -171,7 +171,6 @@ def emit_log(containerId, jobId, content, index, build=False):
 # Register instance and listen for jobs
 if __name__ == "__main__":
     nodeId = register_node()
-    time.sleep(5)
     lastActivity = int(time.time()) 
     while True:
 
