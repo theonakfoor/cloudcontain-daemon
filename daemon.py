@@ -237,12 +237,10 @@ if __name__ == "__main__":
                 if buildCode != 0:
                     update_status(job["containerId"], job["jobId"], "BUILD_FAILED")
                     subprocess.run(["rm", "-rf", f"/tmp/cloudcontain-jobs/{job['containerId']}"])
-                    
                     sqs.delete_message(
                         QueueUrl=SQS_URL,
                         ReceiptHandle=receiptHandle
                     )
-
                     continue
                 
                 # Begin docker run of container files
