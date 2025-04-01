@@ -137,7 +137,7 @@ def generate_dockerfile(containerId):
 
     content = template.replace("{{ENTRY_POINT_FILENAME}}", parts[0])
     content = content.replace("{{ENTRY_POINT_FILE}}", entryPoint["name"])
-    content = content.replace("{{ENTRY_POINT_PATH}}", getPath(entryPoint["folder"], container) + entryPoint["name"])
+    content = content.replace("{{ENTRY_POINT_PATH}}", getPath(str(entryPoint["folder"]), container) + entryPoint["name"])
 
     outputPath = os.path.join(f"/tmp/cloudcontain-jobs/{job['containerId']}", "Dockerfile")
     with open(outputPath, "w") as output:
@@ -272,4 +272,4 @@ if __name__ == "__main__":
                 )
 
         except Exception as e:
-            print(f"Error: {e}")
+            print(e)
