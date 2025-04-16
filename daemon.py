@@ -1,4 +1,5 @@
 import subprocess
+import selectors
 from pymongo import MongoClient
 import boto3
 import pusher
@@ -145,7 +146,7 @@ def generate_dockerfile(containerId):
 
 
 # Emit log via Pusher and store in MongoDB
-def emit_log(containerId, jobId, content, index, build=False):
+def emit_log(containerId, jobId, content, index, level="stdout"):
     logs = db["logs"]
 
     timestamp = datetime.now(timezone.utc)
@@ -154,7 +155,7 @@ def emit_log(containerId, jobId, content, index, build=False):
         "jobId": jobId,
         "content": content,
         "timestamp": str(timestamp),
-        "build": build,
+        "level": level,
         "index": index
     })
 
@@ -163,7 +164,7 @@ def emit_log(containerId, jobId, content, index, build=False):
         "jobId": ObjectId(jobId),
         "content": content,
         "timestamp": timestamp,
-        "build": build,
+        "level": level,
         "index": index
     })
 
@@ -226,7 +227,7 @@ if __name__ == "__main__":
         
             try:
                 for line in buildProcess.stdout:
-                    emit_log(job["containerId"], job["jobId"], line, logIndex, build=True)
+                    emit_log(job["containerId"], job["jobId"], line, logIndex, level="build")
                     logIndex+=1
             finally:
                 buildProcess.stdout.close()
@@ -245,14 +246,34 @@ if __name__ == "__main__":
                 
                 # Begin docker run of container files
                 update_status(job["containerId"], job["jobId"], "RUNNING")
-                jobProcess = subprocess.Popen(["docker", "run", "--rm", "--memory=512m", "--cpus=1", "--name", f"job-{job['jobId']}", f"job-{job['jobId']}"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, bufsize=1)
+                jobProcess = subprocess.Popen(["docker", "run", "--rm", "--memory=512m", "--cpus=1", "--name", f"job-{job['jobId']}", f"job-{job['jobId']}"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, bufsize=1)
+
+                sel = selectors.DefaultSelector()
+                sel.register(jobProcess.stdout, selectors.EVENT_READ, data="stdout")
+                sel.register(jobProcess.stderr, selectors.EVENT_READ, data="stderr")
 
                 try:
-                    for line in jobProcess.stdout:
-                        emit_log(job["containerId"], job["jobId"], line, logIndex)
-                        logIndex+=1
+                    while True:
+                        for key, events in sel.select():
+                            stream = key.fileobj
+                            level = key.data
+                            line = stream.readline()
+                            if not line:
+                                sel.unregister(stream)
+                                stream.close()
+                                continue
+    
+                            emit_log(job["containerId"], job["jobId"], line, logIndex, level=level)
+                            logIndex+=1
+
+                        if jobProcess.poll() is not None and not sel.get_map():
+                            break
                 finally:
-                    jobProcess.stdout.close()
+                    sel.close()
+                    if jobProcess.stdout:
+                        jobProcess.stdout.close()
+                    if jobProcess.stderr:
+                        jobProcess.stderr.close()
                     exitCode = jobProcess.wait()
                     time.sleep(0.5)
 
