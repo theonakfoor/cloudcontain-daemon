@@ -144,6 +144,8 @@ def generate_dockerfile(containerId):
     with open(outputPath, "w") as output:
         output.write(content)
 
+    return parts[1].lower()
+
 
 # Emit log via Pusher and store in MongoDB
 def emit_log(containerId, jobId, content, index, level="stdout"):
@@ -187,7 +189,7 @@ if __name__ == "__main__":
                     QueueUrl=SQS_URL,
                     MaxNumberOfMessages=1,
                     WaitTimeSeconds=20,
-                    VisibilityTimeout=90
+                    VisibilityTimeout=1800
             )
 
             jobRequest = response.get('Messages', [])
@@ -220,7 +222,7 @@ if __name__ == "__main__":
 
             # Begin docker build of container files
             update_status(job["containerId"], job["jobId"], "CONTAINERIZING")
-            generate_dockerfile(job["containerId"])
+            entryPointType = generate_dockerfile(job["containerId"])
             buildProcess = subprocess.Popen(["docker", "build", "-t", f"job-{job['jobId']}", f"/tmp/cloudcontain-jobs/{job['containerId']}"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, bufsize=1) 
     
             logIndex = 0
@@ -280,7 +282,9 @@ if __name__ == "__main__":
                     # Clean up tmp files and remove docker image
                     update_status(job["containerId"], job["jobId"], "CLEANING")
                     subprocess.run(["rm", "-rf", f"/tmp/cloudcontain-jobs/{job['containerId']}"])
-                    subprocess.run(["docker", "rmi", f"job-{job['jobId']}"])
+                    subprocess.run(["docker", "kill", f"job-{job['jobId']}"])
+                    subprocess.run(["docker", "rm", "-f", f"job-{job['jobId']}"])
+                    subprocess.run(["docker", "rmi", "-f", f"job-{job['jobId']}"])
                     time.sleep(0.5)
 
                     # Notify Pusher of success/failure
