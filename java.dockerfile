@@ -3,7 +3,6 @@ FROM openjdk:17-alpine
 WORKDIR /job
 COPY . .
 
-RUN apk add --no-cache coreutils
-RUN javac -d . "{{ENTRY_POINT_PATH}}"
+RUN javac $(find . -name "*.java")
 
-CMD ["stdbuf", "-oL", "-eL", "java", "{{ENTRY_POINT_FILENAME}}"]
+CMD ["java", "-Djava.util.logging.ConsoleHandler.level=ALL", "-Dfile.encoding=UTF8", "-Xshare:off", "{{ENTRY_POINT_FILENAME}}"]
