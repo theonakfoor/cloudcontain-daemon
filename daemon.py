@@ -1,12 +1,8 @@
 import json
 import os
-import selectors
 import subprocess
-import threading
 import time
 from datetime import datetime, timezone
-import queue
-from queue import PriorityQueue
 
 import boto3
 import pusher
@@ -145,7 +141,7 @@ def generate_dockerfile(container_id):
 
 
 # Emit log via Pusher and store in MongoDB
-def emit_log(container_id, job_id, content, index, timestamp, level="stdout"):
+def emit_log(container_id, job_id, content, timestamp, level="stdout"):
     logs = db["logs"]
 
     pusher_client.trigger(str(container_id), 'job-output', {
@@ -153,7 +149,6 @@ def emit_log(container_id, job_id, content, index, timestamp, level="stdout"):
         "content": content,
         "timestamp": str(timestamp),
         "level": level,
-        "index": index
     })
 
     logs.insert_one({
@@ -162,8 +157,15 @@ def emit_log(container_id, job_id, content, index, timestamp, level="stdout"):
         "content": content,
         "timestamp": timestamp,
         "level": level,
-        "index": index
     })
+
+
+# Get level and line content from log line
+def get_line_info(line):
+    level = "stderr" if line.startswith("[STDOUT] [STDERR]") else "stdout"
+    line = line[18:] if level == "stderr" else line[9:]
+
+    return level, line
 
 
 # Get incoming job requests
@@ -200,16 +202,6 @@ def delete_job_from_queue(receipt_handle):
         QueueUrl=SQS_URL,
         ReceiptHandle=receipt_handle
     )
-
-
-# Output stream thread handler
-def stream_handler(stream, level, queue, job_id, container_id):
-    while True:
-        line = stream.readline()
-        if not line:
-            break
-        timestamp = time.perf_counter_ns()
-        queue.put((timestamp, level, line, job_id, container_id))
 
 
 # Register instance and listen for jobs
@@ -249,13 +241,17 @@ if __name__ == "__main__":
             update_status(container_id, job_id, "CONTAINERIZING")
             generate_dockerfile(container_id)
 
-            build_process = subprocess.Popen(["docker", "build", "-t", f"job-{str(job_id)}", f"/tmp/cloudcontain-jobs/{str(container_id)}"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, bufsize=1) 
+            build_process = subprocess.Popen(
+                ["docker", "build", "-t", f"job-{str(job_id)}", f"/tmp/cloudcontain-jobs/{str(container_id)}"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+                bufsize=1
+            ) 
     
-            log_index = 0
             try:
                 for line in build_process.stdout:
-                    emit_log(container_id, job_id, line, log_index, time.perf_counter_ns(), level="build")
-                    log_index+=1
+                    emit_log(container_id, job_id, line, time.perf_counter_ns(), level="build")
             except Exception as e:
                 print(e)
             finally:
@@ -272,35 +268,20 @@ if __name__ == "__main__":
                 # Begin docker run of container files
                 update_status(container_id, job_id, "RUNNING")
                 job_process = subprocess.Popen(
-                    ["docker", "run", "--rm", "--memory=512m", "--cpus=1", "--name", f"job-{str(job_id)}", f"job-{str(job_id)}"],
+                    ["docker", "run", "--rm", "-t", "--memory=512m", "--cpus=1", "--name", f"job-{str(job_id)}", f"job-{str(job_id)}"],
                     stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
                     universal_newlines=True,
                     bufsize=1
                 )
-                job_queue = PriorityQueue()
-
-                job_stdout_thread = threading.Thread(target=stream_handler, args=(job_process.stdout, "stdout", job_queue, job_id, container_id))
-                job_stderr_thread = threading.Thread(target=stream_handler, args=(job_process.stderr, "stderr", job_queue, job_id, container_id))
-
-                job_stdout_thread.start()
-                job_stderr_thread.start()
-
-                active_threads = [job_stdout_thread, job_stderr_thread]
 
                 try:
-                    while any(thread.is_alive() for thread in active_threads) or not job_queue.empty():
-                        try:
-                            timestamp, level, line, job_id, container_id = job_queue.get()
-                            emit_log(container_id, job_id, line, log_index, timestamp, level=level)
-                            log_index += 1
-                        except queue.Empty:
-                            pass
+                    for line in job_process.stdout:
+                        level, line = get_line_info(line)
+                        emit_log(container_id, job_id, line, time.perf_counter_ns(), level=level)
                 except Exception as e:
                     print(e)
                 finally:
                     job_process.stdout.close()
-                    job_process.stderr.close()
                     exit_code = job_process.wait()
 
                     # Clean up tmp files and remove docker image

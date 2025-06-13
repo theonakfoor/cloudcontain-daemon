@@ -5,6 +5,6 @@ COPY . .
 
 ENV PYTHONUNBUFFERED=1
 
-RUN apt-get update && apt-get install -y coreutils
+RUN apt-get update && apt-get install -y bash
 
-CMD ["stdbuf", "-oL", "-eL", "python3", "{{ENTRY_POINT_FILE}}"]
+CMD ["bash", "-c", "python3 -u {{ENTRY_POINT_FILE}} 2> >(while read line; do echo \"[STDERR] $line\"; done) | while read line; do echo \"[STDOUT] $line\"; done"]
