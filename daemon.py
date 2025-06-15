@@ -141,8 +141,11 @@ def generate_dockerfile(container_id):
 
 
 # Emit log via Pusher and store in MongoDB
-def emit_log(container_id, job_id, content, timestamp, level="stdout"):
+def emit_log(container_id, job_id, content, level="stdout"):
     logs = db["logs"]
+
+    timestamp = datetime.now(timezone.utc)
+    ns =  time.perf_counter_ns()
 
     pusher_client.trigger(str(container_id), 'job-output', {
         "jobId": str(job_id),
@@ -156,6 +159,7 @@ def emit_log(container_id, job_id, content, timestamp, level="stdout"):
         "jobId": job_id,
         "content": content,
         "timestamp": timestamp,
+        "ns": ns,
         "level": level,
     })
 
@@ -163,7 +167,7 @@ def emit_log(container_id, job_id, content, timestamp, level="stdout"):
 # Get level and line content from log line
 def get_line_info(line):
     level = "stderr" if line.startswith("[STDOUT] [STDERR]") else "stdout"
-    line = line[18:] if level == "stderr" else line[9:]
+    line = line[18:] if line.startswith("[STDOUT] [STDERR]") else line[9:] if line.startswith("[STDOUT]") else line
 
     return level, line
 
@@ -202,6 +206,14 @@ def delete_job_from_queue(receipt_handle):
         QueueUrl=SQS_URL,
         ReceiptHandle=receipt_handle
     )
+
+
+# Clean temporary job files and Docker images
+def clean_tmp_env(container_id, job_id):
+    subprocess.run(["rm", "-rf", f"/tmp/cloudcontain-jobs/{str(container_id)}"])
+    subprocess.run(["docker", "kill", f"job-{str(job_id)}"])
+    subprocess.run(["docker", "rm", "-f", f"job-{str(job_id)}"])
+    subprocess.run(["docker", "rmi", "-f", f"job-{str(job_id)}"])
 
 
 # Register instance and listen for jobs
@@ -251,7 +263,7 @@ if __name__ == "__main__":
     
             try:
                 for line in build_process.stdout:
-                    emit_log(container_id, job_id, line, time.perf_counter_ns(), level="build")
+                    emit_log(container_id, job_id, line, level="build")
             except Exception as e:
                 print(e)
             finally:
@@ -268,7 +280,7 @@ if __name__ == "__main__":
                 # Begin docker run of container files
                 update_status(container_id, job_id, "RUNNING")
                 job_process = subprocess.Popen(
-                    ["docker", "run", "--rm", "-t", "--memory=512m", "--cpus=1", "--name", f"job-{str(job_id)}", f"job-{str(job_id)}"],
+                    ["docker", "run", "--rm", "-it", "--memory=512m", "--cpus=1", "--name", f"job-{str(job_id)}", f"job-{str(job_id)}"],
                     stdout=subprocess.PIPE,
                     universal_newlines=True,
                     bufsize=1
@@ -277,7 +289,7 @@ if __name__ == "__main__":
                 try:
                     for line in job_process.stdout:
                         level, line = get_line_info(line)
-                        emit_log(container_id, job_id, line, time.perf_counter_ns(), level=level)
+                        emit_log(container_id, job_id, line, level=level)
                 except Exception as e:
                     print(e)
                 finally:
@@ -286,17 +298,13 @@ if __name__ == "__main__":
 
                     # Clean up tmp files and remove docker image
                     update_status(container_id, job_id, "CLEANING")
-                    subprocess.run(["rm", "-rf", f"/tmp/cloudcontain-jobs/{str(container_id)}"])
-                    subprocess.run(["docker", "kill", f"job-{str(job_id)}"])
-                    subprocess.run(["docker", "rm", "-f", f"job-{str(job_id)}"])
-                    subprocess.run(["docker", "rmi", "-f", f"job-{str(job_id)}"])
+                    clean_tmp_env(container_id, job_id)
 
                     # Notify Pusher of success/failure
                     update_status(container_id, job_id, "COMPLETED" if exit_code == 0 else "FAILED")
 
                 # Remove queue item once execution is completed
                 delete_job_from_queue(receipt_handle)
-                print("SUCCESSFULLY DELETED")
 
         except Exception as e:
             print(e)
