@@ -1,14 +1,13 @@
+import json
+import os
 import subprocess
-import selectors
-from pymongo import MongoClient
-import boto3
-import pusher
 import time
 from datetime import datetime, timezone
-import os
-import json
-from bson import ObjectId
 
+import boto3
+import pusher
+from bson import ObjectId
+from pymongo import MongoClient
 
 client = MongoClient(os.environ.get("DB_CONN_STRING"))
 db = client["core"]
@@ -26,36 +25,33 @@ pusher_client = pusher.Pusher(
   ssl=True
 )
 
-instanceId = subprocess.run(['ec2metadata', '--instance-id'], capture_output=True).stdout.decode("utf-8").replace("\n", "")
-instanceType = subprocess.run(['ec2metadata', '--instance-type'], capture_output=True).stdout.decode("utf-8").replace("\n", "")
-instanceRegion = subprocess.run(['ec2metadata', '--availability-zone'], capture_output=True).stdout.decode("utf-8").replace("\n", "")
+instance_id = subprocess.run(['ec2metadata', '--instance-id'], capture_output=True).stdout.decode("utf-8").replace("\n", "")
+instance_type = subprocess.run(['ec2metadata', '--instance-type'], capture_output=True).stdout.decode("utf-8").replace("\n", "")
+instance_region = subprocess.run(['ec2metadata', '--availability-zone'], capture_output=True).stdout.decode("utf-8").replace("\n", "")
 
 
 # Update job status in MongoDB and send Pusher message
-def update_status(containerId, jobId, status):
+def update_status(container_id, job_id, status):
     col = db["jobs"]
-    
-    containerId = containerId if isinstance(containerId, ObjectId) else ObjectId(containerId)
-    jobId = jobId if isinstance(jobId, ObjectId) else ObjectId(jobId)
 
-    result = col.update_one({ "_id": jobId, "containerId": containerId }, { "$set": {
+    result = col.update_one({ "_id": job_id, "containerId": container_id }, { "$set": {
         "status": status
     }})
 
     timestamp = datetime.now(timezone.utc)
     if status == "STARTED":
-        col.update_one({ "_id": jobId, "containerId": containerId }, { "$set": {
+        col.update_one({ "_id": job_id, "containerId": container_id }, { "$set": {
             "started": timestamp
          }})
 
     if status == "COMPLETED" or status == "FAILED" or status == "BUILD_FAILED":
-        col.update_one({ "_id": jobId, "containerId": containerId }, { "$set": {
+        col.update_one({ "_id": job_id, "containerId": container_id }, { "$set": {
             "ended": timestamp
          }})
 
     if result.modified_count > 0:
-        pusher_client.trigger(str(containerId), 'job-status', {
-            "jobId": str(jobId),
+        pusher_client.trigger(str(container_id), 'job-status', {
+            "jobId": str(job_id),
             "status": status,
             "timestamp": str(timestamp)
         })
@@ -74,9 +70,9 @@ def register_node():
         "pending": False,
         "alive": True,
         "started": timestamp,
-        "instanceId": instanceId,
-        "instanceType": instanceType,
-        "instanceRegion": instanceRegion
+        "instanceId": instance_id,
+        "instanceType": instance_type,
+        "instanceRegion": instance_region
     }}, return_document=True)
 
     if node:
@@ -84,7 +80,6 @@ def register_node():
         if len(node_jobs) > 0:
             for job in node_jobs:
                 update_status(job["containerId"], job["_id"], "NODE_STARTED")
-            time.sleep(0.5)
             for job in node_jobs:
                 update_status(job["containerId"], job["_id"], "PENDING")
         return node["_id"]
@@ -92,209 +87,224 @@ def register_node():
 
 
 # Update node status in MongoDB and de-provision EC2 instance
-def shutdown_node(nodeId):
+def shutdown_node(node_id):
     col = db["nodes"]
 
     timestamp = datetime.now(timezone.utc)
 
-    col.update_one({ "_id": nodeId }, { "$set": {
+    col.update_one({ "_id": node_id }, { "$set": {
         "alive": False,
         "killed": timestamp, 
     }})
     
-    ec2.terminate_instances(InstanceIds=[instanceId])
+    ec2.terminate_instances(InstanceIds=[instance_id])
 
 
 # Dynamically generate Dockerfile for passed job
-def generate_dockerfile(containerId):
+def generate_dockerfile(container_id):
 
     def getPath(folder, container):
         path = []
         if folder != "~":
-            curFolder = container["folders"][folder]
-            if not curFolder:
+            cur_folder = container["folders"][folder]
+            if not cur_folder:
                 return -1
             else:
                 while True:
-                    path.insert(0, curFolder["name"])
-                    if curFolder["parent"] == "~":
+                    path.insert(0, cur_folder["name"])
+                    if cur_folder["parent"] == "~":
                         break
-                    curFolder = container["folders"][curFolder["parent"]]
+                    cur_folder = container["folders"][cur_folder["parent"]]
         return f"{'/'.join(path)}{'/' if len(path) > 0 else ''}"
 
     containers = db["containers"]
     files = db["files"]
- 
-    containerId = containerId if isinstance(containerId, ObjectId) else ObjectId(containerId)
-    
-    container = containers.find_one({ "_id": containerId })
-    entryPoint = files.find_one({ "_id": container["entryPoint"] })
+  
+    container = containers.find_one({ "_id": container_id })
+    entry_point = files.find_one({ "_id": container["entryPoint"] })
 
-    parts = entryPoint["name"].split(".")
+    parts = entry_point["name"].split(".")
     
-    templatePath = f"/opt/cloudcontain-job-execution/{parts[1].lower()}.dockerfile"
-    with open(templatePath, "r") as templateFile:
-        template = templateFile.read()
+    template_path = f"/opt/cloudcontain-job-execution/{parts[1].lower()}.dockerfile"
+    with open(template_path, "r") as template_file:
+        template = template_file.read()
 
     content = template.replace("{{ENTRY_POINT_FILENAME}}", parts[0])
-    content = content.replace("{{ENTRY_POINT_FILE}}", entryPoint["name"])
-    content = content.replace("{{ENTRY_POINT_PATH}}", getPath(str(entryPoint["folder"]), container) + entryPoint["name"])
+    content = content.replace("{{ENTRY_POINT_FILE}}", entry_point["name"])
+    content = content.replace("{{ENTRY_POINT_PATH}}", getPath(str(entry_point["folder"]), container) + entry_point["name"])
 
-    outputPath = os.path.join(f"/tmp/cloudcontain-jobs/{job['containerId']}", "Dockerfile")
-    with open(outputPath, "w") as output:
+    output_path = os.path.join(f"/tmp/cloudcontain-jobs/{str(container_id)}", "Dockerfile")
+    with open(output_path, "w") as output:
         output.write(content)
 
     return parts[1].lower()
 
 
 # Emit log via Pusher and store in MongoDB
-def emit_log(containerId, jobId, content, index, level="stdout"):
+def emit_log(container_id, job_id, content, level="stdout"):
     logs = db["logs"]
 
     timestamp = datetime.now(timezone.utc)
+    ns =  time.perf_counter_ns()
 
-    pusher_client.trigger(containerId, 'job-output', {
-        "jobId": jobId,
+    pusher_client.trigger(str(container_id), 'job-output', {
+        "jobId": str(job_id),
         "content": content,
         "timestamp": str(timestamp),
         "level": level,
-        "index": index
     })
 
     logs.insert_one({
-        "containerId": ObjectId(containerId),
-        "jobId": ObjectId(jobId),
+        "containerId": container_id,
+        "jobId": job_id,
         "content": content,
         "timestamp": timestamp,
+        "ns": ns,
         "level": level,
-        "index": index
     })
+
+
+# Get level and line content from log line
+def get_line_info(line):
+    level = "stderr" if line.startswith("[STDOUT] [STDERR]") else "stdout"
+    line = line[18:] if line.startswith("[STDOUT] [STDERR]") else line[9:] if line.startswith("[STDOUT]") else line
+
+    return level, line
+
+
+# Get incoming job requests
+def get_incoming_request():
+    response = sqs.receive_message(
+        QueueUrl=SQS_URL,
+        MaxNumberOfMessages=1,
+        WaitTimeSeconds=20,
+        VisibilityTimeout=1800
+    )
+    job_request = response.get('Messages', [])
+
+    if not job_request:
+        return None
+
+    receipt_handle = job_request[0]["ReceiptHandle"]
+    
+    job = json.loads(job_request[0]["Body"])
+    job_id = ObjectId(job["jobId"])
+    container_id = ObjectId(job["containerId"])
+
+    return receipt_handle, job_id, container_id
+
+
+# Check if job has been previously processed
+def is_job_processed(job_id):
+    jobs = db["jobs"]
+    return jobs.count_documents({ "_id": job_id, "status": { "$nin": ["PENDING"] }}) > 0
+
+
+# Delete job from queue
+def delete_job_from_queue(receipt_handle):
+    sqs.delete_message(
+        QueueUrl=SQS_URL,
+        ReceiptHandle=receipt_handle
+    )
+
+
+# Clean temporary job files and Docker images
+def clean_tmp_env(container_id, job_id):
+    subprocess.run(["rm", "-rf", f"/tmp/cloudcontain-jobs/{str(container_id)}"])
+    subprocess.run(["docker", "kill", f"job-{str(job_id)}"])
+    subprocess.run(["docker", "rm", "-f", f"job-{str(job_id)}"])
+    subprocess.run(["docker", "rmi", "-f", f"job-{str(job_id)}"])
 
 
 # Register instance and listen for jobs
 if __name__ == "__main__":
-    jobs = db["jobs"]
 
-    nodeId = register_node()
-    lastActivity = int(time.time()) 
+    node_id = register_node()
+    last_activity = int(time.time()) 
+ 
     while True:
 
         now = int(time.time())
-        if now - lastActivity >= 1800:
-            shutdown_node(nodeId)
+        if now - last_activity >= 1800:
+            shutdown_node(node_id)
             break
 
         try:
-            response = sqs.receive_message(
-                    QueueUrl=SQS_URL,
-                    MaxNumberOfMessages=1,
-                    WaitTimeSeconds=20,
-                    VisibilityTimeout=1800
-            )
-
-            jobRequest = response.get('Messages', [])
-
-            # No requests received, continue polling
-            if not jobRequest:
+            
+            if not (request := get_incoming_request()):
                 continue
 
-            # Job request received, begin processing
-            receiptHandle = jobRequest[0]["ReceiptHandle"]
-            job = json.loads(jobRequest[0]["Body"])
-            lastActivity = int(time.time())
+            receipt_handle, job_id, container_id = request
+            last_activity = int(time.time())
 
             # Check job not yet processed
-            if jobs.count_documents({ "_id": ObjectId(job["jobId"]), "status": { "$nin": ["PENDING"] }}) > 0:
-                sqs.delete_message(
-                    QueueUrl=SQS_URL,
-                    ReceiptHandle=receiptHandle
-                )
+            if is_job_processed(job_id):
+                delete_job_from_queue(receipt_handle)
                 continue
         
             # Notify Pusher build is starting
-            update_status(job["containerId"], job["jobId"], "STARTED")
-            time.sleep(0.5)
+            update_status(container_id, job_id, "STARTED")
 
             # Begin cloning container files
-            update_status(job["containerId"], job["jobId"], "CLONING")
-            subprocess.run(["aws", "s3", "sync", f"s3://cloudcontain-containers/{job['containerId']}/project", f"/tmp/cloudcontain-jobs/{job['containerId']}"]) 
-            time.sleep(0.5)
+            update_status(container_id, job_id, "CLONING")
+            subprocess.run(["aws", "s3", "sync", f"s3://cloudcontain-containers/{str(container_id)}/project", f"/tmp/cloudcontain-jobs/{str(container_id)}"]) 
 
-            # Begin docker build of container files
-            update_status(job["containerId"], job["jobId"], "CONTAINERIZING")
-            entryPointType = generate_dockerfile(job["containerId"])
-            buildProcess = subprocess.Popen(["docker", "build", "-t", f"job-{job['jobId']}", f"/tmp/cloudcontain-jobs/{job['containerId']}"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, bufsize=1) 
+            # Build Docker container
+            update_status(container_id, job_id, "CONTAINERIZING")
+            generate_dockerfile(container_id)
+
+            build_process = subprocess.Popen(
+                ["docker", "build", "-t", f"job-{str(job_id)}", f"/tmp/cloudcontain-jobs/{str(container_id)}"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+                bufsize=1
+            ) 
     
-            logIndex = 0
-        
             try:
-                for line in buildProcess.stdout:
-                    emit_log(job["containerId"], job["jobId"], line, logIndex, level="build")
-                    logIndex+=1
+                for line in build_process.stdout:
+                    emit_log(container_id, job_id, line, level="build")
+            except Exception as e:
+                print(e)
             finally:
-                buildProcess.stdout.close()
-                buildCode = buildProcess.wait()
-                time.sleep(0.5)
+                build_process.stdout.close()
+                build_code = build_process.wait()
 
                 # Check if build failed
-                if buildCode != 0:
-                    update_status(job["containerId"], job["jobId"], "BUILD_FAILED")
-                    subprocess.run(["rm", "-rf", f"/tmp/cloudcontain-jobs/{job['containerId']}"])
-                    sqs.delete_message(
-                        QueueUrl=SQS_URL,
-                        ReceiptHandle=receiptHandle
-                    )
+                if build_code != 0:
+                    update_status(container_id, job_id, "BUILD_FAILED")
+                    subprocess.run(["rm", "-rf", f"/tmp/cloudcontain-jobs/{str(container_id)}"])
+                    delete_job_from_queue(receipt_handle)
                     continue
                 
                 # Begin docker run of container files
-                update_status(job["containerId"], job["jobId"], "RUNNING")
-                jobProcess = subprocess.Popen(["docker", "run", "--rm", "--memory=512m", "--cpus=1", "--name", f"job-{job['jobId']}", f"job-{job['jobId']}"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, bufsize=1)
-
-                sel = selectors.DefaultSelector()
-                sel.register(jobProcess.stdout, selectors.EVENT_READ, data="stdout")
-                sel.register(jobProcess.stderr, selectors.EVENT_READ, data="stderr")
+                update_status(container_id, job_id, "RUNNING")
+                job_process = subprocess.Popen(
+                    ["docker", "run", "--rm", "-it", "--memory=512m", "--cpus=1", "--name", f"job-{str(job_id)}", f"job-{str(job_id)}"],
+                    stdout=subprocess.PIPE,
+                    universal_newlines=True,
+                    bufsize=1
+                )
 
                 try:
-                    while True:
-                        for key, events in sel.select():
-                            stream = key.fileobj
-                            level = key.data
-                            line = stream.readline()
-                            if not line:
-                                sel.unregister(stream)
-                                stream.close()
-                                continue
-    
-                            emit_log(job["containerId"], job["jobId"], line, logIndex, level=level)
-                            logIndex+=1
-
-                        if jobProcess.poll() is not None and not sel.get_map():
-                            break
+                    for line in job_process.stdout:
+                        level, line = get_line_info(line)
+                        emit_log(container_id, job_id, line, level=level)
+                except Exception as e:
+                    print(e)
                 finally:
-                    sel.close()
-                    if jobProcess.stdout:
-                        jobProcess.stdout.close()
-                    if jobProcess.stderr:
-                        jobProcess.stderr.close()
-                    exitCode = jobProcess.wait()
-                    time.sleep(0.5)
+                    job_process.stdout.close()
+                    exit_code = job_process.wait()
 
                     # Clean up tmp files and remove docker image
-                    update_status(job["containerId"], job["jobId"], "CLEANING")
-                    subprocess.run(["rm", "-rf", f"/tmp/cloudcontain-jobs/{job['containerId']}"])
-                    subprocess.run(["docker", "kill", f"job-{job['jobId']}"])
-                    subprocess.run(["docker", "rm", "-f", f"job-{job['jobId']}"])
-                    subprocess.run(["docker", "rmi", "-f", f"job-{job['jobId']}"])
-                    time.sleep(0.5)
+                    update_status(container_id, job_id, "CLEANING")
+                    clean_tmp_env(container_id, job_id)
 
                     # Notify Pusher of success/failure
-                    update_status(job["containerId"], job["jobId"], "COMPLETED" if exitCode == 0 else "FAILED")
+                    update_status(container_id, job_id, "COMPLETED" if exit_code == 0 else "FAILED")
 
                 # Remove queue item once execution is completed
-                sqs.delete_message(
-                    QueueUrl=SQS_URL,
-                    ReceiptHandle=receiptHandle
-                )
+                delete_job_from_queue(receipt_handle)
 
         except Exception as e:
             print(e)
