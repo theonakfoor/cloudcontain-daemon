@@ -278,9 +278,10 @@ if __name__ == "__main__":
                     continue
                 
                 # Begin docker run of container files
+                # NOTE: Could wrap with script -q -c to provide PTY
                 update_status(container_id, job_id, "RUNNING")
                 job_process = subprocess.Popen(
-                    ["docker", "run", "--rm", "-it", "--memory=512m", "--cpus=1", "--name", f"job-{str(job_id)}", f"job-{str(job_id)}"],
+                    ["script", "-q", "-c", f"docker run --rm --memory=512m --cpus=1 --name job-{str(job_id)} job-{str(job_id)}"],
                     stdout=subprocess.PIPE,
                     universal_newlines=True,
                     bufsize=1
