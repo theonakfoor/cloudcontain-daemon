@@ -165,8 +165,8 @@ def emit_log(container_id, job_id, content, level="stdout"):
 
 
 # Get level and line content from log line
-def get_line_info(line):
-    level = "stderr" if line.startswith("[STDOUT] [STDERR]") else "stdout"
+def get_line_info(line, default="stdout"):
+    level = "stderr" if line.startswith("[STDOUT] [STDERR]") else default
     line = line[18:] if line.startswith("[STDOUT] [STDERR]") else line[9:] if line.startswith("[STDOUT]") else line
 
     return level, line
@@ -254,16 +254,19 @@ if __name__ == "__main__":
             generate_dockerfile(container_id)
 
             build_process = subprocess.Popen(
-                ["docker", "build", "-t", f"job-{str(job_id)}", f"/tmp/cloudcontain-jobs/{str(container_id)}"],
+                [
+                    "script", "-q", "-c", 
+                    "bash -c docker build -t job-" + str(job_id) + " /tmp/cloudcontain-jobs/" + str(container_id) + " 2> >(while read line; do echo \"[STDERR] $line\"; done) | while read line; do echo \"[STDOUT] $line\"; done; exit ${PIPESTATUS[0]}"
+                ],
                 stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
                 universal_newlines=True,
                 bufsize=1
             ) 
     
             try:
                 for line in build_process.stdout:
-                    emit_log(container_id, job_id, line, level="build")
+                    level, line = get_line_info(line, default="build")
+                    emit_log(container_id, job_id, line, level=level)
             except Exception as e:
                 print(e)
             finally:
