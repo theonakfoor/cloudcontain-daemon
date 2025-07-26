@@ -255,9 +255,7 @@ if __name__ == "__main__":
 
             build_process = subprocess.Popen(
                 [
-                    "bash", "-c",
-                    "docker", "build", "-t", f"job-{str(job_id)}", f"/tmp/cloudcontain-jobs/{str(container_id)}",
-                    "2> >(while read line; do echo \"[STDERR] $line\"; done) | while read line; do echo \"[STDOUT] $line\"; done; exit ${PIPESTATUS[0]}"
+                    "./build.sh", f"job-{str(job_id)}", f"/tmp/cloudcontain-jobs/{str(container_id)}"
                 ],
                 shell=True,
                 stdout=subprocess.PIPE,
