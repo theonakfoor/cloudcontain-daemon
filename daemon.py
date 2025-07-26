@@ -257,7 +257,6 @@ if __name__ == "__main__":
                 [
                     "./build.sh", f"job-{str(job_id)}", f"/tmp/cloudcontain-jobs/{str(container_id)}"
                 ],
-                shell=True,
                 stdout=subprocess.PIPE,
                 universal_newlines=True,
                 bufsize=1
