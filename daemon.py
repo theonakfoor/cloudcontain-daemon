@@ -254,9 +254,7 @@ if __name__ == "__main__":
             generate_dockerfile(container_id)
 
             build_process = subprocess.Popen(
-                [
-                    "./build.sh", f"job-{str(job_id)}", f"/tmp/cloudcontain-jobs/{str(container_id)}"
-                ],
+                ["docker", "build", "-t", f"job-{str(job_id)}", f"/tmp/cloudcontain-jobs/{str(container_id)}"],
                 stdout=subprocess.PIPE,
                 universal_newlines=True,
                 bufsize=1
@@ -283,7 +281,7 @@ if __name__ == "__main__":
                 # NOTE: Could wrap with script -q -c to provide PTY
                 update_status(container_id, job_id, "RUNNING")
                 job_process = subprocess.Popen(
-                    ["script", "-q", "-c", f"docker run --rm --memory=512m --cpus=1 --name job-{str(job_id)} job-{str(job_id)}"],
+                    ["docker", "run", "--rm", "-t", "--memory=512m", "--cpus=1", "--name", f"job-{str(job_id)}", f"job-{str(job_id)}"],
                     stdout=subprocess.PIPE,
                     universal_newlines=True,
                     bufsize=1
