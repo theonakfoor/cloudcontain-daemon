@@ -76,7 +76,7 @@ def register_node():
     }}, return_document=True)
 
     if node:
-        node_jobs = list(jobs.find({ "node": node["_id"], "status": { "$nin": ["COMPLETED", "FAILED", "BUILD_FAILED"] }}))
+        node_jobs = list(jobs.find({ "status": "STARTING_NODE" }))
         if len(node_jobs) > 0:
             for job in node_jobs:
                 update_status(job["containerId"], job["_id"], "NODE_STARTED")
@@ -208,6 +208,15 @@ def delete_job_from_queue(receipt_handle):
     )
 
 
+# Attach job to node
+def attach_job_to_node(job_id, node_id):
+    jobs = db["jobs"]
+    result = jobs.update_one({ "_id": job_id }, { "$set": {
+        "nodeId": node_id
+    }})
+    return result.modified_count > 0
+
+
 # Clean temporary job files and Docker images
 def clean_tmp_env(container_id, job_id):
     subprocess.run(["rm", "-rf", f"/tmp/cloudcontain-jobs/{str(container_id)}"])
@@ -241,6 +250,9 @@ if __name__ == "__main__":
             if is_job_processed(job_id):
                 delete_job_from_queue(receipt_handle)
                 continue
+
+            # Attach job to node
+            attach_job_to_node(job_id, node_id)
         
             # Notify Pusher build is starting
             update_status(container_id, job_id, "STARTED")
